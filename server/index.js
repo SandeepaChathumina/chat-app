@@ -3,6 +3,7 @@ const dotenv = require("dotenv");
 const connectDB = require("./config/db"); // Adjust path if needed
 
 const userRoutes = require("./routes/userRoute");
+const contactRoutes = require("./routes/contactRoutes");
 
 dotenv.config();
 connectDB(); // Connect to MongoDB
@@ -21,6 +22,7 @@ app.get("/", (req, res) => {
 app.use(express.json()); // To accept JSON data
 
 app.use("/api/user", userRoutes); // Main user route
+app.use("/api/contacts", contactRoutes);
 
 const PORT = process.env.PORT || 3000;
 
