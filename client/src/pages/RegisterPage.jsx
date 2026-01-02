@@ -11,7 +11,7 @@ const RegisterPage = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      const { data } = await axios.post("/api/user/register", formData);
+      const { data } = await axios.post("/api/user/", formData);
       localStorage.setItem("userInfo", JSON.stringify(data));
       navigate("/chats");
     } catch (err) {
