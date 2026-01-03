@@ -2,11 +2,15 @@ const Chat = require("../models/chatModel");
 const User = require("../models/userModel");
 
 const accessChat = async (req, res) => {
-  const { userId } = req.body; // The ID of the friend you want to chat with
+  console.log("BODY RECEIVED:", req.body); // ADD THIS LINE
+
+  const { userId } = req.body;
 
   if (!userId) {
-    return res.status(400).send("UserId param not sent with request");
+    console.log("ERROR: userId was missing in the request body");
+    return res.status(400).send({ message: "UserId param not sent with request" });
   }
+  // ... rest of code
 
   // 1. Check if a chat between these two users already exists
   var isChat = await Chat.find({
