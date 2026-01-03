@@ -4,6 +4,7 @@ const connectDB = require("./config/db"); // Adjust path if needed
 
 const userRoutes = require("./routes/userRoute");
 const contactRoutes = require("./routes/contactRoutes");
+const chatRoutes = require("./routes/chatRoutes");
 
 dotenv.config();
 connectDB(); // Connect to MongoDB
@@ -23,6 +24,7 @@ app.use(express.json()); // To accept JSON data
 
 app.use("/api/user", userRoutes); // Main user route
 app.use("/api/contacts", contactRoutes);
+app.use("/api/chat", chatRoutes);
 
 const PORT = process.env.PORT || 3000;
 
