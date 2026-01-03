@@ -84,6 +84,22 @@ const ChatPage = () => {
     });
   });
 
+  useEffect(() => {
+  const messageHandler = (newMessageReceived) => {
+    // If we are currently looking at the chat this message belongs to
+    if (selectedChatCompare && selectedChatCompare._id === newMessageReceived.chat._id) {
+      setMessages((prevMessages) => [...prevMessages, newMessageReceived]);
+    }
+  };
+
+  socket.on("message received", messageHandler);
+
+  // Clean up the listener when the component updates or unmounts
+  return () => {
+    socket.off("message received", messageHandler);
+  };
+}, [messages]); // Important: dependency on messages to keep the state fresh
+
   // 4. Messaging Logic: Send Message
   const sendMessage = async (e) => {
     e.preventDefault();

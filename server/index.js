@@ -67,6 +67,8 @@ io.on("connection", (socket) => {
     chat.users.forEach((user) => {
       if (user._id == newMessageReceived.sender._id) return;
 
+      console.log(`Sending message to user room: ${user._id}`);
+
       // .in(user._id) targets that user's personal room
       socket.in(user._id).emit("message received", newMessageReceived);
     });
