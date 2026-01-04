@@ -8,16 +8,25 @@ const RegisterPage = () => {
   });
   const navigate = useNavigate();
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    try {
-      const { data } = await axios.post("/api/user/", formData);
-      localStorage.setItem("userInfo", JSON.stringify(data));
-      navigate("/chats");
-    } catch (err) {
-      alert(err.response?.data?.message || "Registration Failed");
+  // RegisterPage.jsx
+const handleSubmit = async (e) => {
+  e.preventDefault();
+  try {
+    const { data } = await axios.post("/api/user/", formData);
+    console.log("Registration response:", data); // Debug log
+    
+    // Make sure data has a token before storing
+    if (!data.token) {
+      throw new Error("No token received from server");
     }
-  };
+    
+    localStorage.setItem("userInfo", JSON.stringify(data));
+    navigate("/chats");
+  } catch (err) {
+    console.error("Registration error:", err);
+    alert(err.response?.data?.message || err.message || "Registration Failed");
+  }
+};
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">

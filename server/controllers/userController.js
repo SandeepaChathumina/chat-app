@@ -6,6 +6,7 @@ const generateToken = require("../config/generateToken");
 // @desc    Register a new user
 // @route   POST /api/user
 // @access  Public
+// userController.js
 const registerUser = async (req, res) => {
   const { 
     username, 
@@ -35,7 +36,6 @@ const registerUser = async (req, res) => {
     }
 
     // 3. Create the user
-    // Note: Password hashing happens in the Model (pre-save hook)
     const user = await User.create({
       username,
       firstName,
@@ -47,14 +47,19 @@ const registerUser = async (req, res) => {
     });
 
     if (user) {
-      // 4. Respond with the user data (excluding password)
+      // 4. Generate token and respond with user data
+      const token = generateToken(user._id);
+      
       res.status(201).json({
         _id: user._id,
         username: user.username,
         firstName: user.firstName,
         lastName: user.lastName,
         email: user.email,
-        age: user.age, // This is the virtual field we planned
+        mobileNumber: user.mobileNumber, // Add this
+        pic: user.pic, // Add this
+        age: user.age,
+        token: token, // CRITICAL: Include the token
         message: "Registration Successful!",
       });
     }

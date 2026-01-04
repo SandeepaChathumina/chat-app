@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { UserPlus, Search, MessageSquare, Send, MoreVertical, Phone, Video } from "lucide-react";
 import io from "socket.io-client";
+import api from "../api";
 
 const ENDPOINT = "http://localhost:3000"; 
 var socket, selectedChatCompare;
@@ -45,14 +46,14 @@ const ChatPage = () => {
   }, [navigate]);
 
   const fetchContacts = async (token) => {
-    try {
-      const config = { headers: { Authorization: `Bearer ${token}` } };
-      const { data } = await axios.get("/api/contacts", config);
-      setContacts(data);
-    } catch (error) {
-      console.error("Error fetching contacts:", error);
-    }
-  };
+  try {
+    const config = { headers: { Authorization: `Bearer ${token}` } };
+    const { data } = await api.get("/api/contacts", config);
+    setContacts(data);
+  } catch (error) {
+    console.error("Error fetching contacts:", error);
+  }
+};
 
   // 2. Messaging Logic: Fetch Messages (Added fallback for user)
   const fetchMessages = async () => {
