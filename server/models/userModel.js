@@ -3,7 +3,7 @@ const bcrypt = require("bcryptjs");
 
 const userSchema = mongoose.Schema(
   {
-    username: {  // ADD THIS FIELD
+    username: {
       type: String,
       required: true,
       unique: true,
@@ -39,7 +39,7 @@ const userSchema = mongoose.Schema(
       type: String,
       default: "https://via.placeholder.com/150",
     },
-    birthday: {  // ADD THIS FIELD TOO since your registration form has it
+    birthday: {
       type: Date,
       required: true,
     },

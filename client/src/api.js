@@ -2,6 +2,7 @@ import axios from "axios";
 
 const api = axios.create({
   baseURL: "http://localhost:3000",
+  timeout: 10000, // 10 second timeout
 });
 
 // Request Interceptor
@@ -11,7 +12,7 @@ api.interceptors.request.use(
     
     if (userInfo && userInfo.token) {
       config.headers.Authorization = `Bearer ${userInfo.token}`;
-      console.log(`🚀 API Request: ${config.method.toUpperCase()} ${config.url} - Token attached`);
+      console.log(`🚀 API Request: ${config.method.toUpperCase()} ${config.url}`);
     } else {
       console.warn(`⚠️ API Request: ${config.method.toUpperCase()} ${config.url} - NO TOKEN`);
     }
@@ -31,8 +32,12 @@ api.interceptors.response.use(
     return response;
   },
   (error) => {
+    if (error.code === 'ECONNABORTED') {
+      console.error("⏰ Request timeout");
+      return Promise.reject(new Error("Request timeout. Please try again."));
+    }
+    
     console.error(`❌ API Error: ${error.response?.status || "No status"} ${error.config?.url || "Unknown URL"}`);
-    console.error("Error details:", error.response?.data || error.message);
     
     if (error.response?.status === 401) {
       console.error("🔒 Authentication failed, redirecting to login...");

@@ -45,10 +45,10 @@ const registerUser = async (req, res) => {
       username,
       firstName,
       lastName,
-      birthday: new Date(birthday), // Convert to Date object
+      birthday: new Date(birthday),
       email,
       mobileNumber,
-      password, // Will be hashed by the pre-save middleware
+      password,
     });
 
     if (user) {
@@ -70,8 +70,7 @@ const registerUser = async (req, res) => {
     }
   } catch (error) {
     console.error("Registration error:", error);
-    res.status(500);
-    return res.json({ 
+    res.status(500).json({ 
       message: "Server Error",
       error: error.message 
     });
@@ -81,24 +80,32 @@ const registerUser = async (req, res) => {
 const authUser = async (req, res) => {
   const { email, password } = req.body;
 
-  // 1. Find user by email
-  const user = await User.findOne({ email });
+  if (!email || !password) {
+    return res.status(400).json({ message: "Please enter email and password" });
+  }
 
-  // 2. Check if user exists AND password matches
-  if (user && (await user.matchPassword(password))) {
-    res.json({
-      _id: user._id,
-      username: user.username,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      email: user.email,
-      mobileNumber: user.mobileNumber,
-      pic: user.pic,
-      token: generateToken(user._id),
-    });
-  } else {
-    res.status(401);
-    return res.json({ message: "Invalid Email or Password" });
+  try {
+    // 1. Find user by email
+    const user = await User.findOne({ email });
+
+    // 2. Check if user exists AND password matches
+    if (user && (await user.matchPassword(password))) {
+      res.json({
+        _id: user._id,
+        username: user.username,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        mobileNumber: user.mobileNumber,
+        pic: user.pic,
+        token: generateToken(user._id),
+      });
+    } else {
+      res.status(401).json({ message: "Invalid Email or Password" });
+    }
+  } catch (error) {
+    console.error("Login error:", error);
+    res.status(500).json({ message: "Server error" });
   }
 };
 

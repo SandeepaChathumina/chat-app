@@ -1,6 +1,5 @@
 import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import axios from "axios";
 import { UserPlus, Search, MessageSquare, Send, MoreVertical, Users, Phone, X } from "lucide-react";
 import io from "socket.io-client";
 import api from "../api";
@@ -26,6 +25,7 @@ const ChatPage = () => {
 
   const navigate = useNavigate();
   const scrollRef = useRef();
+  const messageInputRef = useRef(null);
 
   // --- 1. INITIAL DATA LOADING ---
   useEffect(() => {
@@ -40,17 +40,38 @@ const ChatPage = () => {
     
     // Initialize socket ONCE
     if (!socket) {
-      socket = io(ENDPOINT);
+      console.log("🔌 Initializing socket connection...");
+      socket = io(ENDPOINT, {
+        transports: ["websocket", "polling"],
+        reconnection: true,
+        reconnectionAttempts: 5,
+        reconnectionDelay: 1000,
+      });
       
       socket.on("connect", () => {
-        console.log("✅ Socket.io connected");
+        console.log("✅ Socket.io connected, socket ID:", socket.id);
         setSocketConnected(true);
         socket.emit("setup", userInfo);
       });
       
-      socket.on("disconnect", () => {
-        console.log("❌ Socket.io disconnected");
+      socket.on("disconnect", (reason) => {
+        console.log("❌ Socket.io disconnected:", reason);
         setSocketConnected(false);
+      });
+      
+      socket.on("connect_error", (error) => {
+        console.error("🔌 Socket connection error:", error);
+        setSocketConnected(false);
+      });
+      
+      socket.on("reconnect", (attemptNumber) => {
+        console.log(`🔄 Socket reconnected (attempt ${attemptNumber})`);
+        setSocketConnected(true);
+        socket.emit("setup", userInfo);
+      });
+      
+      socket.on("connected", () => {
+        console.log("✅ Server acknowledged socket setup");
       });
     }
 
@@ -72,15 +93,11 @@ const ChatPage = () => {
 
     return () => {
       // Cleanup on unmount
-      if (socket) {
-        socket.off("connect");
-        socket.off("disconnect");
-        socket.off("message received");
-      }
+      console.log("🧹 ChatPage cleanup");
     };
   }, [navigate]);
 
-  // --- FETCH CONTACTS (FIXED) ---
+  // --- FETCH CONTACTS ---
   const fetchContacts = async (token) => {
     try {
       console.log("📞 Fetching contacts...");
@@ -89,15 +106,6 @@ const ChatPage = () => {
       setContacts(data);
     } catch (error) {
       console.error("❌ Failed to fetch contacts:", error);
-      // Try direct axios call if api fails
-      try {
-        const config = { headers: { Authorization: `Bearer ${token}` } };
-        const { data } = await axios.get(`${ENDPOINT}/api/contacts`, config);
-        console.log(`✅ Loaded ${data.length} contacts (direct call)`);
-        setContacts(data);
-      } catch (err) {
-        console.error("❌ Both API calls failed:", err);
-      }
     }
   };
 
@@ -115,6 +123,12 @@ const ChatPage = () => {
     if (selectedChat) {
       fetchMessages();
       selectedChatCompare = selectedChat;
+      // Focus on input when chat is selected
+      setTimeout(() => {
+        if (messageInputRef.current) {
+          messageInputRef.current.focus();
+        }
+      }, 100);
     }
   }, [selectedChat]);
 
@@ -156,7 +170,7 @@ const ChatPage = () => {
 
   const sendMessage = async (e) => {
     e.preventDefault();
-    if (!newMessage.trim() || !selectedChat || !socketConnected) return;
+    if (!newMessage.trim() || !selectedChat) return;
     
     try {
       const { data } = await api.post("/api/message", {
@@ -165,79 +179,78 @@ const ChatPage = () => {
       });
       
       setNewMessage("");
-      socket.emit("new message", data);
+      
+      // Emit via socket if connected
+      if (socket && socketConnected) {
+        socket.emit("new message", data);
+      }
+      
       setMessages([...messages, data]);
       
       // Update chats list
       if (user?.token) {
         fetchChats(user.token);
       }
+      
+      // Refocus input
+      if (messageInputRef.current) {
+        messageInputRef.current.focus();
+      }
     } catch (error) {
       console.error("Error sending message:", error);
-      alert("Failed to send message");
+      alert("Failed to send message. Please try again.");
     }
   };
 
-  // --- 3. CONTACT MANAGEMENT (FIXED) ---
-  // --- 3. CONTACT MANAGEMENT (FIXED VERSION) ---
-const handleAddContact = async (e) => {
-  e.preventDefault();
-  
-  if (!newContactNumber.trim() || !newContactName.trim()) {
-    alert("Please enter both phone number and name");
-    return;
-  }
-
-  console.log("➕ ADDING CONTACT...");
-  console.log("Phone:", newContactNumber);
-  console.log("Name:", newContactName);
-
-  const currentUser = JSON.parse(localStorage.getItem("userInfo"));
-  
-  try {
-    // Use the api instance (which has the interceptor)
-    const { data } = await api.post("/api/contacts", {
-      phoneNumber: newContactNumber,
-      contactName: newContactName
-    });
-
-    console.log("✅ Contact added successfully:", data);
+  // --- 3. CONTACT MANAGEMENT ---
+  const handleAddContact = async (e) => {
+    e.preventDefault();
     
-    // Update the contacts state - ADD THE NEW CONTACT TO THE BEGINNING
-    setContacts(prevContacts => {
-      const updated = [data, ...prevContacts];
-      console.log("🔄 Contacts updated. Total:", updated.length);
-      return updated;
-    });
+    if (!newContactNumber.trim() || !newContactName.trim()) {
+      alert("Please enter both phone number and name");
+      return;
+    }
 
-    // Clear the form
-    setNewContactNumber("");
-    setNewContactName("");
-    setShowAddBox(false);
-    
-    // Show success message
-    alert(`✅ ${data.contactName} added to contacts!`);
-    
-    // Optional: Refresh contacts from server to be 100% sure
-    setTimeout(() => {
-      console.log("🔄 Refreshing contacts from server...");
-      fetchContacts(currentUser.token);
-    }, 1000);
+    console.log("➕ ADDING CONTACT...");
+    console.log("Phone:", newContactNumber);
+    console.log("Name:", newContactName);
 
-  } catch (error) {
-    console.error("❌ Error adding contact:", {
-      status: error.response?.status,
-      data: error.response?.data,
-      message: error.message
-    });
+    const currentUser = JSON.parse(localStorage.getItem("userInfo"));
     
-    const errorMessage = error.response?.data?.message || 
-                        error.response?.data?.error || 
-                        "Failed to add contact";
-    
-    alert(`❌ ${errorMessage}`);
-  }
-};
+    try {
+      const { data } = await api.post("/api/contacts", {
+        phoneNumber: newContactNumber,
+        contactName: newContactName
+      });
+
+      console.log("✅ Contact added successfully:", data);
+      
+      setContacts(prevContacts => {
+        const updated = [data, ...prevContacts];
+        console.log("🔄 Contacts updated. Total:", updated.length);
+        return updated;
+      });
+
+      setNewContactNumber("");
+      setNewContactName("");
+      setShowAddBox(false);
+      
+      alert(`✅ ${data.contactName} added to contacts!`);
+      
+    } catch (error) {
+      console.error("❌ Error adding contact:", {
+        status: error.response?.status,
+        data: error.response?.data,
+        message: error.message
+      });
+      
+      const errorMessage = error.response?.data?.message || 
+                          error.response?.data?.error || 
+                          "Failed to add contact";
+      
+      alert(`❌ ${errorMessage}`);
+    }
+  };
 
   const accessChat = async (targetUserId) => {
     if (!targetUserId) {
@@ -248,7 +261,6 @@ const handleAddContact = async (e) => {
     try {
       const { data } = await api.post("/api/chat", { userId: targetUserId });
       
-      // Update chats if new
       if (!chats.find(c => c._id === data._id)) {
         setChats([data, ...chats]);
       }
@@ -314,7 +326,21 @@ const handleAddContact = async (e) => {
               </p>
             </div>
           </div>
-          <MoreVertical size={20} className="cursor-pointer opacity-80 hover:opacity-100" />
+          <div className="flex items-center gap-2">
+            {!socketConnected && (
+              <button
+                onClick={() => {
+                  if (socket) {
+                    socket.connect();
+                  }
+                }}
+                className="text-xs bg-yellow-500 px-2 py-1 rounded hover:bg-yellow-600"
+              >
+                Reconnect
+              </button>
+            )}
+            <MoreVertical size={20} className="cursor-pointer opacity-80 hover:opacity-100" />
+          </div>
         </div>
 
         {/* Navigation Tabs */}
@@ -488,13 +514,19 @@ const handleAddContact = async (e) => {
                   </span>
                 )}
               </div>
-              <div>
+              <div className="flex-1">
                 <h2 className="font-bold text-slate-800">
                   {getOtherUser(selectedChat.users)?.firstName} {getOtherUser(selectedChat.users)?.lastName}
                 </h2>
-                <p className="text-[10px] text-green-500 font-bold uppercase">
-                  {socketConnected ? "🟢 Online" : "⚪ Offline"}
-                </p>
+                <div className="flex items-center gap-2">
+                  <p className="text-[10px] font-bold uppercase flex items-center gap-1">
+                    <span className={`w-2 h-2 rounded-full ${socketConnected ? 'bg-green-500' : 'bg-yellow-500'}`}></span>
+                    {socketConnected ? "🟢 Online" : "🟡 Connecting..."}
+                  </p>
+                  <p className="text-[8px] text-gray-400">
+                    Socket: {socketConnected ? "Connected" : "Disconnected"}
+                  </p>
+                </div>
               </div>
             </div>
 
@@ -527,17 +559,19 @@ const handleAddContact = async (e) => {
             <div className="p-4 bg-white border-t">
               <form className="flex items-center gap-2" onSubmit={sendMessage}>
                 <input
+                  ref={messageInputRef}
                   type="text"
-                  placeholder="Type a message..."
-                  className="flex-1 p-3 bg-slate-100 rounded-xl outline-none text-sm focus:ring-1 ring-blue-400"
+                  placeholder={socketConnected ? "Type a message..." : "Connecting to chat..."}
+                  className="flex-1 p-3 bg-slate-100 rounded-xl outline-none text-sm focus:ring-1 ring-blue-400 focus:bg-white"
                   value={newMessage}
                   onChange={(e) => setNewMessage(e.target.value)}
-                  disabled={!socketConnected}
+                  disabled={!selectedChat}
+                  autoFocus
                 />
                 <button
                   type="submit"
-                  disabled={!socketConnected || !newMessage.trim()}
-                  className="bg-blue-600 text-white p-3 rounded-xl hover:bg-blue-700 shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={!newMessage.trim() || !selectedChat}
+                  className={`p-3 rounded-xl shadow-md ${newMessage.trim() && selectedChat ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-gray-300 text-gray-500 cursor-not-allowed'}`}
                 >
                   <Send size={20} />
                 </button>

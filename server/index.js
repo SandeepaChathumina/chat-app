@@ -1,7 +1,7 @@
 const express = require("express");
 const dotenv = require("dotenv");
 const connectDB = require("./config/db");
-const cors = require("cors"); // ADD THIS
+const cors = require("cors");
 
 // Routes
 const userRoutes = require("./routes/userRoute");
@@ -15,7 +15,10 @@ connectDB();
 const app = express();
 
 // Middleware
-app.use(cors()); // ADD THIS
+app.use(cors({
+  origin: "http://localhost:5173",
+  credentials: true
+}));
 app.use(express.json());
 
 // Routes
@@ -39,7 +42,8 @@ const io = require("socket.io")(server, {
   pingTimeout: 60000,
   cors: {
     origin: "http://localhost:5173",
-    methods: ["GET", "POST"]
+    methods: ["GET", "POST"],
+    credentials: true
   },
 });
 
@@ -51,28 +55,41 @@ io.on("connection", (socket) => {
       socket.join(userData._id);
       console.log(`👤 User ${userData.firstName} joined room ${userData._id}`);
       socket.emit("connected");
+    } else {
+      console.error("❌ Invalid user data in setup");
     }
   });
 
   socket.on("join chat", (room) => {
     socket.join(room);
-    console.log(`💬 Socket joined chat room: ${room}`);
+    console.log(`💬 Socket ${socket.id} joined chat room: ${room}`);
   });
 
   socket.on("new message", (newMessage) => {
+    console.log("📨 New message received:", newMessage);
+    
+    if (!newMessage || !newMessage.chat) {
+      console.error("❌ Invalid message format");
+      return;
+    }
+    
     const chat = newMessage.chat;
     
-    if (!chat || !chat.users) {
-      console.error("Invalid message format");
+    if (!chat.users) {
+      console.error("❌ Chat has no users");
       return;
     }
 
+    // Send to all users in chat except sender
     chat.users.forEach((user) => {
       if (user._id === newMessage.sender._id) return;
       
       console.log(`📤 Sending message to user: ${user._id}`);
-      socket.in(user._id).emit("message received", newMessage);
+      socket.to(user._id).emit("message received", newMessage);
     });
+    
+    // Also send to the chat room
+    socket.to(chat._id).emit("message received", newMessage);
   });
 
   socket.on("disconnect", () => {
