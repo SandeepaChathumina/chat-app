@@ -1,37 +1,43 @@
 const jwt = require("jsonwebtoken");
 const User = require("../models/userModel");
 
-// authMiddleware.js
+// Middleware to protect routes by verifying JWT tokens
 const protect = async (req, res, next) => {
   let token;
 
-  console.log("Authorization header:", req.headers.authorization); // Debug
+  console.log("Auth Middleware - Authorization header:", req.headers.authorization);
 
-  if (
-    req.headers.authorization &&
-    req.headers.authorization.startsWith("Bearer")
-  ) {
+  // Check if token exists in Authorization header
+  if (req.headers.authorization && req.headers.authorization.startsWith("Bearer")) {
     try {
-      // Get token from header (Format: Bearer <token>)
+      // Extract token from header (Format: Bearer <token>)
       token = req.headers.authorization.split(" ")[1];
-      console.log("Token extracted:", token); // Debug
+      console.log("Token extracted successfully");
 
-      // Decodes token id
+      // Verify the token using JWT_SECRET
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      console.log("Token decoded:", decoded); // Debug
+      console.log("Token decoded for user ID:", decoded.id);
 
-      // Fetch user from DB and attach to the request object
+      // Fetch user from database (excluding password) and attach to request
       req.user = await User.findById(decoded.id).select("-password");
+      
+      if (!req.user) {
+        console.error("User not found in database");
+        return res.status(401).json({ message: "User not found" });
+      }
 
-      next(); // Move to the controller
+      console.log(`User authenticated: ${req.user.firstName} (${req.user._id})`);
+      next(); // Proceed to the protected route
+
     } catch (error) {
-      console.error("JWT verification error:", error); // Debug
+      console.error("JWT verification error:", error.message);
       res.status(401).json({ message: "Not authorized, token failed" });
     }
   }
 
+  // If no token was found
   if (!token) {
-    console.log("No token found"); // Debug
+    console.log("No authorization token found");
     res.status(401).json({ message: "Not authorized, no token" });
   }
 };

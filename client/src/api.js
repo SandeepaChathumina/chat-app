@@ -1,22 +1,45 @@
-// api.js - Make sure this is imported and used properly
 import axios from "axios";
 
 const api = axios.create({
   baseURL: "http://localhost:3000",
 });
 
-// This "Interceptor" runs BEFORE every request
+// Request Interceptor
 api.interceptors.request.use(
   (config) => {
     const userInfo = JSON.parse(localStorage.getItem("userInfo"));
-    console.log("Interceptor userInfo:", userInfo); // Debug log
+    
     if (userInfo && userInfo.token) {
       config.headers.Authorization = `Bearer ${userInfo.token}`;
-      console.log("Token added to headers:", config.headers.Authorization); // Debug log
+      console.log(`🚀 API Request: ${config.method.toUpperCase()} ${config.url} - Token attached`);
+    } else {
+      console.warn(`⚠️ API Request: ${config.method.toUpperCase()} ${config.url} - NO TOKEN`);
     }
+    
     return config;
   },
   (error) => {
+    console.error("❌ Request Interceptor Error:", error);
+    return Promise.reject(error);
+  }
+);
+
+// Response Interceptor
+api.interceptors.response.use(
+  (response) => {
+    console.log(`✅ API Response: ${response.status} ${response.config.url}`);
+    return response;
+  },
+  (error) => {
+    console.error(`❌ API Error: ${error.response?.status || "No status"} ${error.config?.url || "Unknown URL"}`);
+    console.error("Error details:", error.response?.data || error.message);
+    
+    if (error.response?.status === 401) {
+      console.error("🔒 Authentication failed, redirecting to login...");
+      localStorage.removeItem("userInfo");
+      window.location.href = "/";
+    }
+    
     return Promise.reject(error);
   }
 );

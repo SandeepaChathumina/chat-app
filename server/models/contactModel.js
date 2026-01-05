@@ -2,17 +2,36 @@ const mongoose = require("mongoose");
 
 const contactSchema = mongoose.Schema(
   {
-    user: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true }, // The person who is saving the contact
+    user: { 
+      type: mongoose.Schema.Types.ObjectId, 
+      ref: "User", 
+      required: true,
+      index: true
+    },
     contactUser: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
-    }, // The person being saved
-    contactName: { type: String, required: true }, // The nickname (e.g., "Best Friend")
-    phoneNumber: { type: String, required: true }, // The mobile number for searching
+      index: true
+    },
+    contactName: { 
+      type: String, 
+      required: true,
+      trim: true 
+    },
+    phoneNumber: { 
+      type: String, 
+      required: true,
+      trim: true 
+    },
   },
-  { timestamps: true }
+  { 
+    timestamps: true
+  }
 );
+
+// Add compound unique index to prevent duplicates
+contactSchema.index({ user: 1, contactUser: 1 }, { unique: true });
 
 const Contact = mongoose.model("Contact", contactSchema);
 module.exports = Contact;

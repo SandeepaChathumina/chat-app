@@ -1,7 +1,9 @@
 const express = require("express");
 const dotenv = require("dotenv");
 const connectDB = require("./config/db");
+const cors = require("cors"); // ADD THIS
 
+// Routes
 const userRoutes = require("./routes/userRoute");
 const contactRoutes = require("./routes/contactRoutes");
 const chatRoutes = require("./routes/chatRoutes");
@@ -13,11 +15,12 @@ connectDB();
 const app = express();
 
 // Middleware
+app.use(cors()); // ADD THIS
 app.use(express.json());
 
 // Routes
 app.get("/", (req, res) => {
-  res.send("API is running successfully!");
+  res.send("Chat API is running!");
 });
 
 app.use("/api/user", userRoutes);
@@ -27,56 +30,52 @@ app.use("/api/message", messageRoutes);
 
 const PORT = process.env.PORT || 3000;
 
-// 1. Capture the server instance for Socket.io
 const server = app.listen(PORT, () => {
-  console.log(`Server started on port ${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });
 
-// 2. Initialize Socket.io
+// Socket.io setup
 const io = require("socket.io")(server, {
-  pingTimeout: 60000, // Close connection after 60s of inactivity to save resources
+  pingTimeout: 60000,
   cors: {
-    origin: "http://localhost:5173", // Allow your Vite frontend to connect
+    origin: "http://localhost:5173",
+    methods: ["GET", "POST"]
   },
 });
 
-// 3. Set up Socket.io connection logic
 io.on("connection", (socket) => {
-  console.log("Connected to socket.io ✅");
+  console.log("✅ New socket connection:", socket.id);
 
-  // User joins a personal room based on their ID
   socket.on("setup", (userData) => {
-    socket.join(userData._id);
-    console.log(`User ${userData.firstName} joined their personal room: ${userData._id}`);
-    socket.emit("connected");
+    if (userData && userData._id) {
+      socket.join(userData._id);
+      console.log(`👤 User ${userData.firstName} joined room ${userData._id}`);
+      socket.emit("connected");
+    }
   });
 
-  // User joins a specific Chat Room (ID of the Chat)
   socket.on("join chat", (room) => {
     socket.join(room);
-    console.log("User Joined Chat Room: " + room);
+    console.log(`💬 Socket joined chat room: ${room}`);
   });
 
-  // When a message is sent
-  socket.on("new message", (newMessageReceived) => {
-    var chat = newMessageReceived.chat;
+  socket.on("new message", (newMessage) => {
+    const chat = newMessage.chat;
+    
+    if (!chat || !chat.users) {
+      console.error("Invalid message format");
+      return;
+    }
 
-    if (!chat.users) return console.log("chat.users not defined");
-
-    // Send the message to everyone in the chat except the sender
     chat.users.forEach((user) => {
-      if (user._id == newMessageReceived.sender._id) return;
-
-      console.log(`Sending message to user room: ${user._id}`);
-
-      // .in(user._id) targets that user's personal room
-      socket.in(user._id).emit("message received", newMessageReceived);
+      if (user._id === newMessage.sender._id) return;
+      
+      console.log(`📤 Sending message to user: ${user._id}`);
+      socket.in(user._id).emit("message received", newMessage);
     });
   });
 
-  // Handle Disconnects
-  socket.off("setup", () => {
-    console.log("USER DISCONNECTED");
-    socket.leave(userData._id);
+  socket.on("disconnect", () => {
+    console.log("❌ Socket disconnected:", socket.id);
   });
 });
