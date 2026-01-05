@@ -54,3 +54,23 @@ const accessChat = async (req, res) => {
 };
 
 module.exports = { accessChat };
+
+const fetchChats = async (req, res) => {
+  try {
+    const chats = await Chat.find({ users: { $elemMatch: { $eq: req.user._id } } })
+      .populate("users", "-password")
+      .populate("latestMessage")
+      .sort({ updatedAt: -1 });
+
+    const results = await User.populate(chats, {
+      path: "latestMessage.sender",
+      select: "firstName lastName pic email",
+    });
+
+    res.status(200).send(results);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
+module.exports = { accessChat, fetchChats }; // Add fetchChats to exports
