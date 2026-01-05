@@ -1,7 +1,14 @@
 const mongoose = require("mongoose");
+const bcrypt = require("bcryptjs");
 
 const userSchema = mongoose.Schema(
   {
+    username: {  // ADD THIS FIELD
+      type: String,
+      required: true,
+      unique: true,
+      trim: true,
+    },
     firstName: {
       type: String,
       required: true,
@@ -18,7 +25,7 @@ const userSchema = mongoose.Schema(
       lowercase: true,
       trim: true,
     },
-    mobileNumber: { // MAKE SURE THIS FIELD EXISTS
+    mobileNumber: {
       type: String,
       required: true,
       unique: true,
@@ -32,10 +39,29 @@ const userSchema = mongoose.Schema(
       type: String,
       default: "https://via.placeholder.com/150",
     },
+    birthday: {  // ADD THIS FIELD TOO since your registration form has it
+      type: Date,
+      required: true,
+    },
   },
   {
     timestamps: true,
   }
 );
+
+// Add password hashing middleware
+userSchema.pre("save", async function (next) {
+  if (!this.isModified("password")) {
+    next();
+  }
+
+  const salt = await bcrypt.genSalt(10);
+  this.password = await bcrypt.hash(this.password, salt);
+});
+
+// Add method to compare password
+userSchema.methods.matchPassword = async function (enteredPassword) {
+  return await bcrypt.compare(enteredPassword, this.password);
+};
 
 module.exports = mongoose.model("User", userSchema);

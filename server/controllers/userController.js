@@ -1,12 +1,9 @@
 const User = require("../models/userModel");
-
-
 const generateToken = require("../config/generateToken");
 
 // @desc    Register a new user
 // @route   POST /api/user
 // @access  Public
-// userController.js
 const registerUser = async (req, res) => {
   const { 
     username, 
@@ -25,14 +22,22 @@ const registerUser = async (req, res) => {
   }
 
   try {
-    // 2. Check if user already exists (by email or username)
+    // 2. Check if user already exists (by email, username, or mobileNumber)
     const userExists = await User.findOne({ 
-      $or: [{ email }, { username }] 
+      $or: [{ email }, { username }, { mobileNumber }] 
     });
 
     if (userExists) {
       res.status(400);
-      return res.json({ message: "User with this email or username already exists" });
+      if (userExists.email === email) {
+        return res.json({ message: "User with this email already exists" });
+      }
+      if (userExists.username === username) {
+        return res.json({ message: "Username already taken" });
+      }
+      if (userExists.mobileNumber === mobileNumber) {
+        return res.json({ message: "Mobile number already registered" });
+      }
     }
 
     // 3. Create the user
@@ -40,10 +45,10 @@ const registerUser = async (req, res) => {
       username,
       firstName,
       lastName,
-      birthday,
+      birthday: new Date(birthday), // Convert to Date object
       email,
       mobileNumber,
-      password,
+      password, // Will be hashed by the pre-save middleware
     });
 
     if (user) {
@@ -56,26 +61,22 @@ const registerUser = async (req, res) => {
         firstName: user.firstName,
         lastName: user.lastName,
         email: user.email,
-        mobileNumber: user.mobileNumber, // Add this
-        pic: user.pic, // Add this
-        age: user.age,
-        token: token, // CRITICAL: Include the token
+        mobileNumber: user.mobileNumber,
+        pic: user.pic,
+        birthday: user.birthday,
+        token: token,
         message: "Registration Successful!",
       });
     }
   } catch (error) {
+    console.error("Registration error:", error);
     res.status(500);
-    return res.json({ message: "Server Error: " + error.message });
+    return res.json({ 
+      message: "Server Error",
+      error: error.message 
+    });
   }
 };
-
-module.exports = { registerUser };
-
-
-
-
-
-
 
 const authUser = async (req, res) => {
   const { email, password } = req.body;
@@ -84,7 +85,6 @@ const authUser = async (req, res) => {
   const user = await User.findOne({ email });
 
   // 2. Check if user exists AND password matches
-  // matchPassword is the function we added to the User Model earlier
   if (user && (await user.matchPassword(password))) {
     res.json({
       _id: user._id,
@@ -92,8 +92,9 @@ const authUser = async (req, res) => {
       firstName: user.firstName,
       lastName: user.lastName,
       email: user.email,
+      mobileNumber: user.mobileNumber,
       pic: user.pic,
-      token: generateToken(user._id), // Send the token to the frontend
+      token: generateToken(user._id),
     });
   } else {
     res.status(401);
@@ -101,4 +102,4 @@ const authUser = async (req, res) => {
   }
 };
 
-module.exports = { registerUser, authUser }; // Don't forget to export both
+module.exports = { registerUser, authUser };
