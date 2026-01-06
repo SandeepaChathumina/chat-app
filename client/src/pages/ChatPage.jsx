@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { UserPlus, Search, MessageSquare, Send, MoreVertical, Users, Phone, X } from "lucide-react";
 import io from "socket.io-client";
@@ -8,27 +8,29 @@ const ENDPOINT = "http://localhost:3000";
 let socket, selectedChatCompare;
 
 const ChatPage = () => {
-  // --- States ---
-  const [user, setUser] = useState(null);
-  const [contacts, setContacts] = useState([]); 
-  const [chats, setChats] = useState([]);       
-  const [activeTab, setActiveTab] = useState("chats");
-  const [showAddBox, setShowAddBox] = useState(false); 
-  const [searchQuery, setSearchQuery] = useState("");
-  const [selectedChat, setSelectedChat] = useState(null);
-  const [messages, setMessages] = useState([]);
-  const [newMessage, setNewMessage] = useState("");
-  const [newContactNumber, setNewContactNumber] = useState("");
-  const [newContactName, setNewContactName] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [socketConnected, setSocketConnected] = useState(false);
+  // --- STATE DECLARATIONS ---
+  const [user, setUser] = useState(null); // Current logged-in user
+  const [contacts, setContacts] = useState([]); // User's contact list
+  const [chats, setChats] = useState([]); // User's chat conversations
+  const [activeTab, setActiveTab] = useState("chats"); // Active sidebar tab
+  const [showAddBox, setShowAddBox] = useState(false); // Show/hide add contact form
+  const [searchQuery, setSearchQuery] = useState(""); // Search filter query
+  const [selectedChat, setSelectedChat] = useState(null); // Currently selected chat
+  const [messages, setMessages] = useState([]); // Messages in selected chat
+  const [newMessage, setNewMessage] = useState(""); // New message input
+  const [newContactNumber, setNewContactNumber] = useState(""); // New contact phone
+  const [newContactName, setNewContactName] = useState(""); // New contact name
+  const [loading, setLoading] = useState(true); // Initial loading state
+  const [socketConnected, setSocketConnected] = useState(false); // Socket connection status
+  const [connectionError, setConnectionError] = useState(false); // Connection error flag
 
   const navigate = useNavigate();
-  const scrollRef = useRef();
-  const messageInputRef = useRef(null);
+  const scrollRef = useRef(); // For auto-scrolling to latest message
+  const messageInputRef = useRef(null); // Reference to message input field
 
-  // --- 1. INITIAL DATA LOADING ---
+  // --- 1. INITIALIZATION & DATA LOADING ---
   useEffect(() => {
+    // Check if user is logged in
     const storedInfo = localStorage.getItem("userInfo");
     if (!storedInfo) {
       navigate("/");
@@ -38,44 +40,78 @@ const ChatPage = () => {
     const userInfo = JSON.parse(storedInfo);
     setUser(userInfo);
     
-    // Initialize socket ONCE
+    // 🔥 CRITICAL: Initialize socket connection ONLY ONCE
     if (!socket) {
       console.log("🔌 Initializing socket connection...");
       socket = io(ENDPOINT, {
-        transports: ["websocket", "polling"],
-        reconnection: true,
-        reconnectionAttempts: 5,
-        reconnectionDelay: 1000,
+        transports: ["websocket", "polling"], // Use WebSocket with fallback
+        reconnection: true, // Enable auto-reconnection
+        reconnectionAttempts: 5, // Try 5 times
+        reconnectionDelay: 1000, // Start with 1 second delay
+        reconnectionDelayMax: 5000, // Max 5 seconds delay
+        randomizationFactor: 0.5, // Randomize reconnection timing
       });
       
+      // --- SOCKET EVENT HANDLERS ---
+      
+      // Handle successful connection
       socket.on("connect", () => {
         console.log("✅ Socket.io connected, socket ID:", socket.id);
         setSocketConnected(true);
+        setConnectionError(false);
+        
+        // Send user data to join personal room
         socket.emit("setup", userInfo);
+        console.log(`👤 Emitted setup for user: ${userInfo._id}`);
       });
       
+      // Handle disconnection
       socket.on("disconnect", (reason) => {
         console.log("❌ Socket.io disconnected:", reason);
         setSocketConnected(false);
+        
+        // Set error flag for certain disconnect reasons
+        if (reason === "io server disconnect" || reason === "transport close") {
+          setConnectionError(true);
+        }
       });
       
+      // Handle connection errors
       socket.on("connect_error", (error) => {
         console.error("🔌 Socket connection error:", error);
         setSocketConnected(false);
+        setConnectionError(true);
       });
       
+      // Handle successful reconnection
       socket.on("reconnect", (attemptNumber) => {
         console.log(`🔄 Socket reconnected (attempt ${attemptNumber})`);
         setSocketConnected(true);
+        setConnectionError(false);
+        
+        // Re-setup user after reconnection
         socket.emit("setup", userInfo);
       });
       
+      // Handle reconnection errors
+      socket.on("reconnect_error", (error) => {
+        console.error("🔌 Socket reconnection error:", error);
+        setConnectionError(true);
+      });
+      
+      // Handle failed reconnection
+      socket.on("reconnect_failed", () => {
+        console.error("🔌 Socket reconnection failed");
+        setConnectionError(true);
+      });
+      
+      // Server acknowledgment
       socket.on("connected", () => {
         console.log("✅ Server acknowledged socket setup");
       });
     }
 
-    // Load data
+    // Load user data (contacts and chats)
     const loadData = async () => {
       try {
         await Promise.all([
@@ -91,13 +127,25 @@ const ChatPage = () => {
 
     loadData();
 
+    // 🔥 IMPORTANT: Cleanup on component unmount
     return () => {
-      // Cleanup on unmount
-      console.log("🧹 ChatPage cleanup");
+      console.log("🧹 ChatPage cleanup - removing socket listeners");
+      if (socket) {
+        socket.off("connect");
+        socket.off("disconnect");
+        socket.off("connect_error");
+        socket.off("reconnect");
+        socket.off("reconnect_error");
+        socket.off("reconnect_failed");
+        socket.off("connected");
+        socket.off("message received");
+      }
     };
   }, [navigate]);
 
-  // --- FETCH CONTACTS ---
+  // --- DATA FETCHING FUNCTIONS ---
+  
+  // Fetch user's contacts
   const fetchContacts = async (token) => {
     try {
       console.log("📞 Fetching contacts...");
@@ -109,6 +157,7 @@ const ChatPage = () => {
     }
   };
 
+  // Fetch user's chats
   const fetchChats = async (token) => {
     try {
       const { data } = await api.get("/api/chat");
@@ -118,12 +167,15 @@ const ChatPage = () => {
     }
   };
 
-  // --- 2. MESSAGING ---
+  // --- 2. MESSAGE HANDLING ---
+  
+  // Load messages when chat is selected
   useEffect(() => {
     if (selectedChat) {
       fetchMessages();
-      selectedChatCompare = selectedChat;
-      // Focus on input when chat is selected
+      selectedChatCompare = selectedChat; // Store for socket comparison
+      
+      // Auto-focus message input with small delay
       setTimeout(() => {
         if (messageInputRef.current) {
           messageInputRef.current.focus();
@@ -132,72 +184,153 @@ const ChatPage = () => {
     }
   }, [selectedChat]);
 
+  // Fetch messages for selected chat
   const fetchMessages = async () => {
     if (!selectedChat) return;
     try {
       const { data } = await api.get(`/api/message/${selectedChat._id}`);
       setMessages(data);
+      
+      // 🔥 CRITICAL: Join the chat room AFTER messages are loaded
       if (socket) {
-        socket.emit("join chat", selectedChat._id);
+        // Small delay ensures socket is ready
+        setTimeout(() => {
+          socket.emit("join chat", selectedChat._id);
+          console.log(`💬 Joined chat room: ${selectedChat._id}`);
+        }, 100);
       }
     } catch (error) {
       console.error("Failed to load messages:", error);
     }
   };
 
-  // Socket message listener
+  // --- SOCKET MESSAGE LISTENER ---
   useEffect(() => {
+    // Handle incoming real-time messages
     const handleNewMessage = (newMessageReceived) => {
-      if (selectedChatCompare && selectedChatCompare._id === newMessageReceived.chat._id) {
-        setMessages(prev => [...prev, newMessageReceived]);
+      console.log("📨 Socket: Message received event triggered", {
+        messageId: newMessageReceived._id,
+        content: newMessageReceived.content,
+        chatId: newMessageReceived.chat._id,
+        senderId: newMessageReceived.sender?._id,
+        myId: user?._id
+      });
+      
+      // 🔥 FIX: Check if message is for current chat
+      if (!selectedChatCompare || selectedChatCompare._id !== newMessageReceived.chat._id) {
+        console.log("⚠️ Message not for current chat, updating chat list only");
+        
+        // Still update chats list to show new message in sidebar
+        if (user?.token) {
+          fetchChats(user.token);
+        }
+        return;
       }
-      // Refresh chats to update latest message
+      
+      // 🔥 FIX: Prevent duplicate messages with ID check
+      setMessages(prev => {
+        // Check if this message already exists
+        const messageExists = prev.some(msg => {
+          // Skip temporary messages in comparison
+          if (msg.isTemp) return false;
+          return msg._id === newMessageReceived._id;
+        });
+        
+        if (messageExists) {
+          console.log("⚠️ DUPLICATE MESSAGE DETECTED - Ignoring", newMessageReceived._id);
+          return prev;
+        }
+        
+        console.log("✅ Adding new message to state:", newMessageReceived.content);
+        
+        // Remove any temporary messages with same content
+        const filteredPrev = prev.filter(msg => 
+          !msg.isTemp || msg.content !== newMessageReceived.content
+        );
+        
+        return [...filteredPrev, newMessageReceived];
+      });
+      
+      // Update chats list for sidebar preview
       if (user?.token) {
         fetchChats(user.token);
       }
     };
 
+    // Attach socket listener
     if (socket) {
       socket.on("message received", handleNewMessage);
     }
 
+    // Cleanup listener on unmount
     return () => {
       if (socket) {
+        console.log("🧹 Removing message received listener");
         socket.off("message received", handleNewMessage);
       }
     };
-  }, [user]);
+  }, [selectedChatCompare, user]); // Re-run when selected chat or user changes
 
+  // --- SEND MESSAGE FUNCTION ---
   const sendMessage = async (e) => {
     e.preventDefault();
     if (!newMessage.trim() || !selectedChat) return;
     
+    // 🔥 CRITICAL: Create temporary message for OPTIMISTIC UPDATE
+    // This shows message immediately in UI without waiting for server
+    const tempMessageId = `temp_${Date.now()}`;
+    const tempMessage = {
+      _id: tempMessageId,
+      sender: user,
+      content: newMessage,
+      chat: selectedChat,
+      createdAt: new Date().toISOString(),
+      isTemp: true // Flag to identify temporary messages
+    };
+    
+    // 1. OPTIMISTIC UPDATE: Add temporary message to UI immediately
+    setMessages(prev => [...prev, tempMessage]);
+    
+    // 2. Clear input field immediately
+    setNewMessage("");
+    
     try {
+      // 3. Send message to server via API
       const { data } = await api.post("/api/message", {
         content: newMessage,
         chatId: selectedChat._id
       });
       
-      setNewMessage("");
+      console.log("📤 Message saved to database:", data.content);
       
-      // Emit via socket if connected
+      // 4. Replace temporary message with real one from server
+      setMessages(prev => prev.map(msg => 
+        msg._id === tempMessageId ? data : msg
+      ));
+      
+      // 5. BROADCAST MESSAGE VIA SOCKET for real-time delivery
       if (socket && socketConnected) {
+        console.log("📡 Emitting message via socket to room:", selectedChat._id);
         socket.emit("new message", data);
+      } else {
+        console.log("⚠️ Socket not connected, message saved but not broadcasted");
       }
       
-      setMessages([...messages, data]);
-      
-      // Update chats list
+      // 6. Update chats list for latest message preview
       if (user?.token) {
         fetchChats(user.token);
       }
       
-      // Refocus input
+      // 7. Refocus input for next message
       if (messageInputRef.current) {
         messageInputRef.current.focus();
       }
     } catch (error) {
       console.error("Error sending message:", error);
+      
+      // 8. REMOVE TEMPORARY MESSAGE if send failed
+      setMessages(prev => prev.filter(msg => msg._id !== tempMessageId));
+      
       alert("Failed to send message. Please try again.");
     }
   };
@@ -252,6 +385,7 @@ const ChatPage = () => {
     }
   };
 
+  // Open or create a chat with a contact
   const accessChat = async (targetUserId) => {
     if (!targetUserId) {
       alert("Cannot open chat: Invalid contact");
@@ -261,30 +395,33 @@ const ChatPage = () => {
     try {
       const { data } = await api.post("/api/chat", { userId: targetUserId });
       
+      // Add to chats list if not already there
       if (!chats.find(c => c._id === data._id)) {
         setChats([data, ...chats]);
       }
       
       setSelectedChat(data);
-      setActiveTab("chats");
+      setActiveTab("chats"); // Switch to chats tab
     } catch (error) {
       console.error("Error opening chat:", error);
       alert("Failed to open chat");
     }
   };
 
-  // --- HELPERS ---
+  // --- HELPER FUNCTIONS ---
+  
+  // Get the other user in a chat (not the current user)
   const getOtherUser = (users) => {
     const currentUser = JSON.parse(localStorage.getItem("userInfo"));
     return users?.find(u => u._id !== currentUser?._id);
   };
 
-  // Auto-scroll
+  // Auto-scroll to latest message
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Search
+  // Search functionality
   const filteredChats = chats.filter(chat => {
     const other = getOtherUser(chat.users);
     const name = other ? `${other.firstName} ${other.lastName}`.toLowerCase() : "";
@@ -296,7 +433,44 @@ const ChatPage = () => {
     contact.phoneNumber.includes(searchQuery)
   );
 
-  // Loading screen
+  // Manual socket reconnection function
+  const handleManualReconnect = () => {
+    console.log("🔄 Manual reconnect triggered");
+    if (socket) {
+      socket.disconnect();
+      setTimeout(() => {
+        socket.connect();
+        
+        // Re-setup user after reconnection
+        const storedInfo = localStorage.getItem("userInfo");
+        if (storedInfo) {
+          const userInfo = JSON.parse(storedInfo);
+          setTimeout(() => {
+            if (socket.connected) {
+              socket.emit("setup", userInfo);
+              console.log("🔄 Re-emitted setup after manual reconnect");
+            }
+          }, 1000);
+        }
+      }, 500);
+    }
+  };
+
+  // Auto-reconnect attempt
+  useEffect(() => {
+    if (!socketConnected && !connectionError) {
+      const timer = setTimeout(() => {
+        console.log("⏰ Auto-reconnect attempt");
+        if (socket && !socket.connected) {
+          socket.connect();
+        }
+      }, 3000);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [socketConnected, connectionError]);
+
+  // --- LOADING SCREEN ---
   if (loading) {
     return (
       <div className="flex h-screen bg-slate-50 items-center justify-center">
@@ -309,41 +483,73 @@ const ChatPage = () => {
     );
   }
 
+  // --- MAIN COMPONENT RENDER ---
   return (
     <div className="flex h-screen bg-slate-50 antialiased text-slate-900">
-      {/* --- SIDEBAR --- */}
+      {/* --- LEFT SIDEBAR --- */}
       <div className="w-full md:w-96 bg-white border-r border-slate-200 flex flex-col shadow-xl">
-        {/* User Header */}
+        
+        {/* USER HEADER */}
         <div className="p-4 bg-blue-700 text-white flex items-center justify-between">
           <div className="flex items-center gap-3">
+            {/* User Avatar */}
             <div className="w-10 h-10 rounded-full bg-blue-500 border-2 border-white flex items-center justify-center font-bold">
               {user?.firstName?.[0] || "U"}
             </div>
             <div>
               <p className="font-bold leading-none">{user?.firstName || "User"}</p>
-              <p className="text-[10px] text-blue-200 mt-1">
-                {socketConnected ? "🟢 Online" : "⚪ Connecting..."}
-              </p>
+              {/* Connection Status */}
+              <div className="flex items-center gap-2 mt-1">
+                {socketConnected ? (
+                  <span className="text-[10px] text-green-300 flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-green-500"></span>
+                    Online
+                  </span>
+                ) : connectionError ? (
+                  <span className="text-[10px] text-red-300 flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
+                    Disconnected
+                  </span>
+                ) : (
+                  <span className="text-[10px] text-yellow-300 flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-yellow-500 animate-pulse"></span>
+                    Connecting...
+                  </span>
+                )}
+              </div>
             </div>
           </div>
+          
+          {/* Connection Controls */}
           <div className="flex items-center gap-2">
-            {!socketConnected && (
+            {/* Manual Reconnect Button (only show when error) */}
+            {connectionError && (
               <button
-                onClick={() => {
-                  if (socket) {
-                    socket.connect();
-                  }
-                }}
-                className="text-xs bg-yellow-500 px-2 py-1 rounded hover:bg-yellow-600"
+                onClick={handleManualReconnect}
+                className="text-xs bg-red-500 hover:bg-red-600 px-3 py-1 rounded flex items-center gap-1 transition-colors"
+                title="Click to reconnect to chat server"
               >
+                <span>🔁</span>
                 Reconnect
               </button>
             )}
-            <MoreVertical size={20} className="cursor-pointer opacity-80 hover:opacity-100" />
+            
+            {/* Auto-connecting Indicator */}
+            {!socketConnected && !connectionError && (
+              <div className="text-[10px] text-blue-200 animate-pulse">
+                Auto-connecting...
+              </div>
+            )}
+            
+            {/* Settings Menu */}
+            <MoreVertical 
+              size={20} 
+              className="cursor-pointer opacity-80 hover:opacity-100" 
+            />
           </div>
         </div>
 
-        {/* Navigation Tabs */}
+        {/* NAVIGATION TABS */}
         <div className="flex bg-slate-100 p-1 m-2 rounded-lg">
           <button
             onClick={() => setActiveTab("chats")}
@@ -359,7 +565,7 @@ const ChatPage = () => {
           </button>
         </div>
 
-        {/* Search & Add Contact */}
+        {/* SEARCH & ADD CONTACT */}
         <div className="px-4 pb-2 space-y-2">
           <div className="relative">
             <Search className="absolute left-3 top-2.5 text-slate-400" size={16} />
@@ -372,6 +578,7 @@ const ChatPage = () => {
             />
           </div>
 
+          {/* Add Contact Form (only in contacts tab) */}
           {activeTab === "contacts" && (
             <div className="space-y-2">
               <button
@@ -382,6 +589,7 @@ const ChatPage = () => {
                 {showAddBox ? "Cancel" : "Add New Contact"}
               </button>
 
+              {/* Contact Form */}
               {showAddBox && (
                 <form onSubmit={handleAddContact} className="p-3 bg-blue-50 border-2 border-blue-100 rounded-xl space-y-2">
                   <input
@@ -410,9 +618,10 @@ const ChatPage = () => {
           )}
         </div>
 
-        {/* Contacts/Chats List */}
+        {/* CONTACTS/CHATS LIST */}
         <div className="flex-1 overflow-y-auto px-2">
           {activeTab === "chats" ? (
+            // CHATS TAB CONTENT
             filteredChats.length > 0 ? (
               filteredChats.map((chat) => {
                 const other = getOtherUser(chat.users);
@@ -450,7 +659,7 @@ const ChatPage = () => {
               </div>
             )
           ) : (
-            // CONTACTS TAB
+            // CONTACTS TAB CONTENT
             filteredContacts.length > 0 ? (
               filteredContacts.map((contact) => (
                 <div
@@ -498,8 +707,9 @@ const ChatPage = () => {
       {/* --- MAIN CHAT AREA --- */}
       <div className="hidden md:flex flex-1 flex-col relative bg-slate-100">
         {selectedChat ? (
+          // CHAT SELECTED VIEW
           <>
-            {/* Chat Header */}
+            {/* CHAT HEADER */}
             <div className="p-4 bg-white border-b flex items-center gap-3 shadow-sm">
               <div className="w-10 h-10 rounded-full bg-blue-100 border flex items-center justify-center">
                 {getOtherUser(selectedChat.users)?.pic ? (
@@ -530,7 +740,7 @@ const ChatPage = () => {
               </div>
             </div>
 
-            {/* Messages */}
+            {/* MESSAGES CONTAINER */}
             <div className="flex-1 p-6 overflow-y-auto flex flex-col gap-3 bg-[#e5ddd5]">
               {messages.length > 0 ? (
                 messages.map((msg) => {
@@ -552,10 +762,11 @@ const ChatPage = () => {
                   <p>No messages yet. Say hello! 👋</p>
                 </div>
               )}
+              {/* Auto-scroll anchor */}
               <div ref={scrollRef} />
             </div>
 
-            {/* Message Input */}
+            {/* MESSAGE INPUT FORM */}
             <div className="p-4 bg-white border-t">
               <form className="flex items-center gap-2" onSubmit={sendMessage}>
                 <input
@@ -579,6 +790,7 @@ const ChatPage = () => {
             </div>
           </>
         ) : (
+          // NO CHAT SELECTED (WELCOME VIEW)
           <div className="h-full flex flex-col justify-center items-center text-slate-300">
             <MessageSquare size={120} className="opacity-10" />
             <h2 className="text-3xl font-bold text-slate-400 mt-4 italic">Welcome to Chat!</h2>
