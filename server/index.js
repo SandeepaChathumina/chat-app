@@ -10,13 +10,13 @@ const chatRoutes = require("./routes/chatRoutes");
 const messageRoutes = require("./routes/messageRoutes");
 
 dotenv.config();
-connectDB(); // Connect to MongoDB
+connectDB(); // Connect to MongoDB database
 
 const app = express();
 
 // Middleware Configuration
 app.use(cors({
-  origin: "http://localhost:5173", // Allow frontend requests
+  origin: "http://localhost:5173", // Allow requests from frontend
   credentials: true // Allow cookies/auth headers
 }));
 app.use(express.json()); // Parse JSON request bodies
@@ -26,10 +26,11 @@ app.get("/", (req, res) => {
   res.send("Chat API is running!");
 });
 
-app.use("/api/user", userRoutes); // User registration/login
-app.use("/api/contacts", contactRoutes); // Contact management
-app.use("/api/chat", chatRoutes); // Chat management
-app.use("/api/message", messageRoutes); // Message handling
+// Mount API routes
+app.use("/api/user", userRoutes); // User registration/login routes
+app.use("/api/contacts", contactRoutes); // Contact management routes
+app.use("/api/chat", chatRoutes); // Chat management routes
+app.use("/api/message", messageRoutes); // Message handling routes
 
 const PORT = process.env.PORT || 3000;
 
@@ -48,14 +49,15 @@ const io = require("socket.io")(server, {
   },
 });
 
-// Store connected users for tracking online status
-const connectedUsers = new Map(); // Map<userId, socketId>
+// 🔥 FIX: Store connected users for tracking and debugging
+// Map<userId, socketId> - Tracks which users are connected with which socket
+const connectedUsers = new Map();
 
 // Handle new socket connections
 io.on("connection", (socket) => {
   console.log("✅ New socket connection:", socket.id);
 
-  // 1. SETUP USER ROOM - When user logs in/connects
+  // 1. SETUP USER ROOM - Called when user logs in/connects
   socket.on("setup", (userData) => {
     if (userData && userData._id) {
       // Store user ID with socket ID for quick lookup
@@ -64,7 +66,7 @@ io.on("connection", (socket) => {
       // Join user's personal room (for direct messaging)
       socket.join(userData._id.toString());
       
-      console.log(`👤 User ${userData.firstName} (${userData._id}) connected`);
+      console.log(`👤 User ${userData.firstName} (${userData._id}) joined personal room`);
       console.log(`📊 Total connected users: ${Array.from(connectedUsers.keys()).length}`);
       
       // Send acknowledgment to client
@@ -74,22 +76,21 @@ io.on("connection", (socket) => {
     }
   });
 
-  // 2. JOIN CHAT ROOM - When user opens a chat
+  // 2. JOIN CHAT ROOM - Called when user opens a chat
   socket.on("join chat", (room) => {
     socket.join(room);
     console.log(`💬 Socket ${socket.id} joined chat room: ${room}`);
   });
 
-  // 3. HANDLE NEW MESSAGE - When user sends a message
+  // 3. HANDLE NEW MESSAGE - Called when user sends a message
   socket.on("new message", (newMessage) => {
-    console.log("📨 New message received:", {
-      messageId: newMessage._id,
-      content: newMessage.content,
-      chatId: newMessage.chat._id,
-      senderId: newMessage.sender?._id
-    });
+    console.log("📨 [SERVER] New message event received");
+    console.log("   Message ID:", newMessage._id);
+    console.log("   Content:", newMessage.content);
+    console.log("   Chat ID:", newMessage.chat._id);
+    console.log("   Sender ID:", newMessage.sender?._id);
     
-    // Validate message data
+    // 🔥 VALIDATION: Check if message data is complete
     if (!newMessage || !newMessage.chat) {
       console.error("❌ Invalid message format");
       return;
@@ -97,20 +98,20 @@ io.on("connection", (socket) => {
     
     const chat = newMessage.chat;
     
-    if (!chat.users) {
-      console.error("❌ Chat has no users");
+    if (!chat.users || !Array.isArray(chat.users)) {
+      console.error("❌ Chat has no users array");
       return;
     }
 
-    console.log(`👥 Users in this chat:`, chat.users.map(u => ({
-      id: u._id,
-      name: `${u.firstName} ${u.lastName}`
-    })));
+    // 🔥 DEBUG: Show all users in this chat
+    console.log(`👥 Users in chat ${chat._id}:`);
+    chat.users.forEach(user => {
+      console.log(`   - ${user._id} (${user.firstName} ${user.lastName})`);
+    });
 
-    // 🔥 CRITICAL FIX: Send message to ALL users in the chat
+    // 🔥 CRITICAL FIX: Send message to ALL users in the chat (except sender)
     // This ensures real-time delivery without page refresh
     
-    // Method 1: Send to individual user rooms (for direct delivery)
     chat.users.forEach((user) => {
       const userId = user._id.toString();
       const senderId = newMessage.sender?._id?.toString();
@@ -121,21 +122,37 @@ io.on("connection", (socket) => {
         return;
       }
       
+      console.log(`📤 Attempting to send to user ${userId}:`);
+      
       // Check if user is currently connected
       const userSocketId = connectedUsers.get(userId);
       if (userSocketId) {
-        console.log(`📤 Sending to connected user: ${userId}`);
+        console.log(`   ✅ User is connected (socket: ${userSocketId})`);
+        
+        // 🔥 METHOD 1: Send to user's personal room (most reliable)
+        io.to(userId).emit("message received", newMessage);
+        console.log(`   📨 Sent to user's personal room: ${userId}`);
       } else {
-        console.log(`⚠️ User ${userId} is offline, message will be delivered when they reconnect`);
+        console.log(`   ⚠️ User ${userId} is offline - message will be delivered when they reconnect`);
       }
-      
-      // Send to user's personal room
-      io.to(userId).emit("message received", newMessage);
     });
     
-    // Method 2: Also send to chat room (for users who joined via "join chat")
+    // 🔥 METHOD 2: Also send to chat room (for users who joined via "join chat")
     console.log(`📤 Broadcasting to chat room: ${chat._id}`);
+    
+    // Debug: Show how many sockets are in this chat room
+    const chatRoom = io.sockets.adapter.rooms.get(chat._id);
+    if (chatRoom) {
+      console.log(`   👥 ${chatRoom.size} socket(s) in chat room ${chat._id}`);
+    } else {
+      console.log(`   ⚠️ No sockets in chat room ${chat._id}`);
+    }
+    
+    // Emit to chat room
     io.to(chat._id).emit("message received", newMessage);
+    console.log(`   ✅ Message broadcasted to chat room ${chat._id}`);
+    
+    console.log("📨 [SERVER] Message broadcast complete\n");
   });
 
   // 4. TYPING INDICATORS (Optional - for future features)
@@ -147,7 +164,7 @@ io.on("connection", (socket) => {
     socket.to(room).emit("stop typing");
   });
 
-  // 5. DISCONNECTION - Clean up when user disconnects
+  // 5. DISCONNECTION HANDLER - Clean up when user disconnects
   socket.on("disconnect", () => {
     console.log("❌ Socket disconnected:", socket.id);
     
@@ -161,5 +178,26 @@ io.on("connection", (socket) => {
     }
     
     console.log(`📊 Remaining connected users: ${Array.from(connectedUsers.keys()).length}`);
+  });
+  
+  // 🔥 DEBUG ENDPOINT: For troubleshooting from frontend
+  socket.on("debug", (data) => {
+    console.log("🔍 [DEBUG] Request from client:");
+    console.log("   Socket ID:", socket.id);
+    console.log("   User ID:", data.userId);
+    console.log("   Chat ID:", data.chatId);
+    
+    // Check which rooms this socket is in
+    const rooms = Array.from(socket.rooms);
+    console.log("   Rooms socket is in:", rooms);
+    console.log("   Is in chat room?", rooms.includes(data.chatId));
+    
+    // Send debug info back to client
+    socket.emit("debug_response", {
+      socketId: socket.id,
+      rooms: rooms,
+      isInChatRoom: rooms.includes(data.chatId),
+      connectedUsersCount: connectedUsers.size
+    });
   });
 });

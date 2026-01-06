@@ -5,7 +5,10 @@ import io from "socket.io-client";
 import api from "../api";
 
 const ENDPOINT = "http://localhost:3000"; 
-let socket, selectedChatCompare;
+
+// 🔥 FIX: Global socket instance - prevents multiple connections
+let socket = null;
+let selectedChatCompare = null; // Reference to track current chat in socket listeners
 
 const ChatPage = () => {
   // --- STATE DECLARATIONS ---
@@ -27,28 +30,43 @@ const ChatPage = () => {
   const navigate = useNavigate();
   const scrollRef = useRef(); // For auto-scrolling to latest message
   const messageInputRef = useRef(null); // Reference to message input field
+  
+  // 🔥 FIX: Use refs to prevent multiple initializations
+  const initializedRef = useRef(false); // Tracks if component initialized
+  const dataLoadedRef = useRef(false); // Tracks if data already loaded
 
   // --- 1. INITIALIZATION & DATA LOADING ---
   useEffect(() => {
+    // 🔥 FIX: Prevent multiple initializations on re-renders
+    if (initializedRef.current) {
+      console.log("🔄 Component already initialized, skipping...");
+      return;
+    }
+    initializedRef.current = true;
+    
+    console.log("🚀 [FRONTEND] ChatPage mounting...");
+    
     // Check if user is logged in
     const storedInfo = localStorage.getItem("userInfo");
     if (!storedInfo) {
+      console.log("🔒 No user info found, redirecting to login");
       navigate("/");
       return;
     }
     
     const userInfo = JSON.parse(storedInfo);
+    console.log("👤 User loaded from localStorage:", userInfo.firstName);
     setUser(userInfo);
     
-    // 🔥 CRITICAL: Initialize socket connection ONLY ONCE
+    // 🔥 FIX: Initialize socket connection ONLY ONCE
     if (!socket) {
-      console.log("🔌 Initializing socket connection...");
+      console.log("🔌 [SOCKET] Initializing new socket connection...");
       socket = io(ENDPOINT, {
-        transports: ["websocket", "polling"], // Use WebSocket with fallback
-        reconnection: true, // Enable auto-reconnection
-        reconnectionAttempts: 5, // Try 5 times
+        transports: ["websocket", "polling"], // Use WebSocket with polling fallback
+        reconnection: true, // Enable automatic reconnection
+        reconnectionAttempts: 5, // Try 5 times before giving up
         reconnectionDelay: 1000, // Start with 1 second delay
-        reconnectionDelayMax: 5000, // Max 5 seconds delay
+        reconnectionDelayMax: 5000, // Maximum 5 seconds delay
         randomizationFactor: 0.5, // Randomize reconnection timing
       });
       
@@ -56,18 +74,18 @@ const ChatPage = () => {
       
       // Handle successful connection
       socket.on("connect", () => {
-        console.log("✅ Socket.io connected, socket ID:", socket.id);
+        console.log("✅ [SOCKET] Connected, ID:", socket.id);
         setSocketConnected(true);
         setConnectionError(false);
         
-        // Send user data to join personal room
+        // Send user data to join personal room on server
         socket.emit("setup", userInfo);
-        console.log(`👤 Emitted setup for user: ${userInfo._id}`);
+        console.log(`👤 [SOCKET] Emitted setup for user: ${userInfo._id}`);
       });
       
       // Handle disconnection
       socket.on("disconnect", (reason) => {
-        console.log("❌ Socket.io disconnected:", reason);
+        console.log("❌ [SOCKET] Disconnected, reason:", reason);
         setSocketConnected(false);
         
         // Set error flag for certain disconnect reasons
@@ -78,48 +96,71 @@ const ChatPage = () => {
       
       // Handle connection errors
       socket.on("connect_error", (error) => {
-        console.error("🔌 Socket connection error:", error);
+        console.error("🔌 [SOCKET] Connection error:", error.message);
         setSocketConnected(false);
         setConnectionError(true);
       });
       
       // Handle successful reconnection
       socket.on("reconnect", (attemptNumber) => {
-        console.log(`🔄 Socket reconnected (attempt ${attemptNumber})`);
+        console.log(`🔄 [SOCKET] Reconnected (attempt ${attemptNumber})`);
         setSocketConnected(true);
         setConnectionError(false);
         
         // Re-setup user after reconnection
         socket.emit("setup", userInfo);
+        console.log(`🔄 [SOCKET] Re-emitted setup after reconnect`);
       });
       
       // Handle reconnection errors
       socket.on("reconnect_error", (error) => {
-        console.error("🔌 Socket reconnection error:", error);
+        console.error("🔌 [SOCKET] Reconnection error:", error);
         setConnectionError(true);
       });
       
       // Handle failed reconnection
       socket.on("reconnect_failed", () => {
-        console.error("🔌 Socket reconnection failed");
+        console.error("🔌 [SOCKET] Reconnection failed");
         setConnectionError(true);
       });
       
       // Server acknowledgment
       socket.on("connected", () => {
-        console.log("✅ Server acknowledged socket setup");
+        console.log("✅ [SOCKET] Server acknowledged setup");
       });
+      
+      // Debug response from server
+      socket.on("debug_response", (data) => {
+        console.log("🔍 [DEBUG] Response from server:", data);
+      });
+    } else {
+      // Socket already exists - just update user setup
+      console.log("🔌 [SOCKET] Using existing socket connection");
+      if (socket.connected) {
+        socket.emit("setup", userInfo);
+        setSocketConnected(true);
+      }
     }
 
-    // Load user data (contacts and chats)
+    // 🔥 FIX: Load data only once
     const loadData = async () => {
+      if (dataLoadedRef.current) {
+        console.log("📊 Data already loaded, skipping...");
+        setLoading(false);
+        return;
+      }
+      
       try {
+        console.log("📥 [DATA] Loading initial data...");
+        // Load contacts and chats in parallel
         await Promise.all([
-          fetchContacts(userInfo.token),
-          fetchChats(userInfo.token)
+          fetchContacts(),
+          fetchChats()
         ]);
+        dataLoadedRef.current = true;
+        console.log("✅ [DATA] Initial data loaded successfully");
       } catch (error) {
-        console.error("Failed to load data:", error);
+        console.error("❌ [DATA] Failed to load data:", error);
       } finally {
         setLoading(false);
       }
@@ -127,51 +168,50 @@ const ChatPage = () => {
 
     loadData();
 
-    // 🔥 IMPORTANT: Cleanup on component unmount
+    // 🔥 FIX: Proper cleanup - only remove listeners, don't disconnect socket
     return () => {
-      console.log("🧹 ChatPage cleanup - removing socket listeners");
-      if (socket) {
-        socket.off("connect");
-        socket.off("disconnect");
-        socket.off("connect_error");
-        socket.off("reconnect");
-        socket.off("reconnect_error");
-        socket.off("reconnect_failed");
-        socket.off("connected");
-        socket.off("message received");
-      }
+      console.log("🧹 [CLEANUP] ChatPage unmounting");
+      // Note: We DON'T disconnect the socket here so it can be reused
+      // Socket listeners are removed in their respective useEffect cleanup functions
     };
   }, [navigate]);
 
   // --- DATA FETCHING FUNCTIONS ---
   
-  // Fetch user's contacts
-  const fetchContacts = async (token) => {
+  // Fetch user's contacts with useCallback to prevent recreation
+  const fetchContacts = useCallback(async () => {
     try {
-      console.log("📞 Fetching contacts...");
+      console.log("📞 [API] Fetching contacts...");
       const { data } = await api.get("/api/contacts");
-      console.log(`✅ Loaded ${data.length} contacts`);
+      console.log(`✅ [API] Loaded ${data.length} contacts`);
       setContacts(data);
+      return data;
     } catch (error) {
-      console.error("❌ Failed to fetch contacts:", error);
+      console.error("❌ [API] Failed to fetch contacts:", error);
+      return [];
     }
-  };
+  }, []);
 
-  // Fetch user's chats
-  const fetchChats = async (token) => {
+  // Fetch user's chats with useCallback to prevent recreation
+  const fetchChats = useCallback(async () => {
     try {
+      console.log("💬 [API] Fetching chats...");
       const { data } = await api.get("/api/chat");
+      console.log(`✅ [API] Loaded ${data.length} chats`);
       setChats(data);
+      return data;
     } catch (error) {
-      console.error("Error fetching chats:", error);
+      console.error("❌ [API] Error fetching chats:", error);
+      return [];
     }
-  };
+  }, []);
 
   // --- 2. MESSAGE HANDLING ---
   
   // Load messages when chat is selected
   useEffect(() => {
     if (selectedChat) {
+      console.log(`💬 [CHAT] Chat selected: ${selectedChat._id}`);
       fetchMessages();
       selectedChatCompare = selectedChat; // Store for socket comparison
       
@@ -179,6 +219,7 @@ const ChatPage = () => {
       setTimeout(() => {
         if (messageInputRef.current) {
           messageInputRef.current.focus();
+          console.log("🎯 [UI] Focused message input");
         }
       }, 100);
     }
@@ -187,49 +228,54 @@ const ChatPage = () => {
   // Fetch messages for selected chat
   const fetchMessages = async () => {
     if (!selectedChat) return;
+    
     try {
+      console.log(`📨 [API] Fetching messages for chat: ${selectedChat._id}`);
       const { data } = await api.get(`/api/message/${selectedChat._id}`);
+      console.log(`✅ [API] Loaded ${data.length} messages`);
       setMessages(data);
       
-      // 🔥 CRITICAL: Join the chat room AFTER messages are loaded
+      // 🔥 CRITICAL: Join the chat room on server AFTER messages are loaded
       if (socket) {
-        // Small delay ensures socket is ready
+        // Small delay ensures socket is ready and user is authenticated
         setTimeout(() => {
-          socket.emit("join chat", selectedChat._id);
-          console.log(`💬 Joined chat room: ${selectedChat._id}`);
-        }, 100);
+          if (socket.connected) {
+            socket.emit("join chat", selectedChat._id);
+            console.log(`💬 [SOCKET] Joined chat room: ${selectedChat._id}`);
+          } else {
+            console.warn("⚠️ [SOCKET] Cannot join chat room: Socket not connected");
+          }
+        }, 200);
       }
     } catch (error) {
-      console.error("Failed to load messages:", error);
+      console.error("❌ [API] Failed to load messages:", error);
     }
   };
 
   // --- SOCKET MESSAGE LISTENER ---
   useEffect(() => {
-    // Handle incoming real-time messages
+    console.log("🔔 [SOCKET] Setting up message received listener...");
+    
+    // Handle incoming real-time messages from socket
     const handleNewMessage = (newMessageReceived) => {
-      console.log("📨 Socket: Message received event triggered", {
+      console.log("📨 [SOCKET] Message received event", {
         messageId: newMessageReceived._id,
-        content: newMessageReceived.content,
+        content: newMessageReceived.content.substring(0, 50) + "...",
         chatId: newMessageReceived.chat._id,
-        senderId: newMessageReceived.sender?._id,
-        myId: user?._id
+        isForCurrentChat: selectedChatCompare?._id === newMessageReceived.chat._id
       });
       
-      // 🔥 FIX: Check if message is for current chat
+      // 🔥 FIX: Check if message is for the currently selected chat
       if (!selectedChatCompare || selectedChatCompare._id !== newMessageReceived.chat._id) {
-        console.log("⚠️ Message not for current chat, updating chat list only");
-        
-        // Still update chats list to show new message in sidebar
-        if (user?.token) {
-          fetchChats(user.token);
-        }
+        console.log("📋 [SOCKET] Message not for current chat, updating chat list only");
+        // Still update chats list to show new message in sidebar preview
+        fetchChats();
         return;
       }
       
       // 🔥 FIX: Prevent duplicate messages with ID check
       setMessages(prev => {
-        // Check if this message already exists
+        // Check if this message already exists in our state
         const messageExists = prev.some(msg => {
           // Skip temporary messages in comparison
           if (msg.isTemp) return false;
@@ -237,11 +283,11 @@ const ChatPage = () => {
         });
         
         if (messageExists) {
-          console.log("⚠️ DUPLICATE MESSAGE DETECTED - Ignoring", newMessageReceived._id);
+          console.log("⚠️ [SOCKET] Duplicate message detected, ignoring");
           return prev;
         }
         
-        console.log("✅ Adding new message to state:", newMessageReceived.content);
+        console.log("✅ [SOCKET] Adding new message to state");
         
         // Remove any temporary messages with same content
         const filteredPrev = prev.filter(msg => 
@@ -252,32 +298,37 @@ const ChatPage = () => {
       });
       
       // Update chats list for sidebar preview
-      if (user?.token) {
-        fetchChats(user.token);
-      }
+      fetchChats();
     };
 
     // Attach socket listener
     if (socket) {
       socket.on("message received", handleNewMessage);
+      console.log("✅ [SOCKET] Message listener attached");
+    } else {
+      console.error("❌ [SOCKET] No socket available for attaching listener");
     }
 
-    // Cleanup listener on unmount
+    // Cleanup listener on unmount or dependency change
     return () => {
       if (socket) {
-        console.log("🧹 Removing message received listener");
+        console.log("🧹 [SOCKET] Removing message received listener");
         socket.off("message received", handleNewMessage);
       }
     };
-  }, [selectedChatCompare, user]); // Re-run when selected chat or user changes
+  }, [fetchChats]); // Only depend on fetchChats (stable due to useCallback)
 
   // --- SEND MESSAGE FUNCTION ---
   const sendMessage = async (e) => {
     e.preventDefault();
-    if (!newMessage.trim() || !selectedChat) return;
+    if (!newMessage.trim() || !selectedChat) {
+      console.warn("⚠️ [MESSAGE] Cannot send: empty message or no chat selected");
+      return;
+    }
     
-    // 🔥 CRITICAL: Create temporary message for OPTIMISTIC UPDATE
-    // This shows message immediately in UI without waiting for server
+    console.log("📤 [MESSAGE] Sending message:", newMessage);
+    
+    // 🔥 OPTIMISTIC UPDATE: Create temporary message for immediate UI feedback
     const tempMessageId = `temp_${Date.now()}`;
     const tempMessage = {
       _id: tempMessageId,
@@ -291,42 +342,42 @@ const ChatPage = () => {
     // 1. OPTIMISTIC UPDATE: Add temporary message to UI immediately
     setMessages(prev => [...prev, tempMessage]);
     
-    // 2. Clear input field immediately
+    // 2. Clear input field immediately for better UX
     setNewMessage("");
     
     try {
       // 3. Send message to server via API
+      console.log("📡 [API] Sending message to server...");
       const { data } = await api.post("/api/message", {
         content: newMessage,
         chatId: selectedChat._id
       });
       
-      console.log("📤 Message saved to database:", data.content);
+      console.log(`✅ [API] Message saved to database: ${data._id}`);
       
       // 4. Replace temporary message with real one from server
       setMessages(prev => prev.map(msg => 
         msg._id === tempMessageId ? data : msg
       ));
       
-      // 5. BROADCAST MESSAGE VIA SOCKET for real-time delivery
-      if (socket && socketConnected) {
-        console.log("📡 Emitting message via socket to room:", selectedChat._id);
+      // 5. 🔥 CRITICAL: BROADCAST MESSAGE VIA SOCKET for real-time delivery
+      if (socket && socket.connected) {
+        console.log("📡 [SOCKET] Emitting 'new message' event to server");
         socket.emit("new message", data);
       } else {
-        console.log("⚠️ Socket not connected, message saved but not broadcasted");
+        console.warn("⚠️ [SOCKET] Socket not connected, message saved but not broadcasted");
+        // Message is still saved in database, will load on refresh
       }
       
-      // 6. Update chats list for latest message preview
-      if (user?.token) {
-        fetchChats(user.token);
-      }
+      // 6. Update chats list for latest message preview in sidebar
+      fetchChats();
       
       // 7. Refocus input for next message
       if (messageInputRef.current) {
         messageInputRef.current.focus();
       }
     } catch (error) {
-      console.error("Error sending message:", error);
+      console.error("❌ [MESSAGE] Error sending message:", error);
       
       // 8. REMOVE TEMPORARY MESSAGE if send failed
       setMessages(prev => prev.filter(msg => msg._id !== tempMessageId));
@@ -344,9 +395,9 @@ const ChatPage = () => {
       return;
     }
 
-    console.log("➕ ADDING CONTACT...");
-    console.log("Phone:", newContactNumber);
-    console.log("Name:", newContactName);
+    console.log("➕ [CONTACT] Adding contact...");
+    console.log("   Phone:", newContactNumber);
+    console.log("   Name:", newContactName);
 
     const currentUser = JSON.parse(localStorage.getItem("userInfo"));
     
@@ -356,14 +407,15 @@ const ChatPage = () => {
         contactName: newContactName
       });
 
-      console.log("✅ Contact added successfully:", data);
+      console.log("✅ [CONTACT] Added successfully:", data.contactName);
       
       setContacts(prevContacts => {
         const updated = [data, ...prevContacts];
-        console.log("🔄 Contacts updated. Total:", updated.length);
+        console.log(`🔄 [CONTACT] Contacts updated. Total: ${updated.length}`);
         return updated;
       });
 
+      // Reset form
       setNewContactNumber("");
       setNewContactName("");
       setShowAddBox(false);
@@ -371,11 +423,7 @@ const ChatPage = () => {
       alert(`✅ ${data.contactName} added to contacts!`);
       
     } catch (error) {
-      console.error("❌ Error adding contact:", {
-        status: error.response?.status,
-        data: error.response?.data,
-        message: error.message
-      });
+      console.error("❌ [CONTACT] Error adding contact:", error);
       
       const errorMessage = error.response?.data?.message || 
                           error.response?.data?.error || 
@@ -392,6 +440,8 @@ const ChatPage = () => {
       return;
     }
 
+    console.log(`💬 [CHAT] Opening chat with user: ${targetUserId}`);
+    
     try {
       const { data } = await api.post("/api/chat", { userId: targetUserId });
       
@@ -402,8 +452,9 @@ const ChatPage = () => {
       
       setSelectedChat(data);
       setActiveTab("chats"); // Switch to chats tab
+      console.log(`✅ [CHAT] Chat opened: ${data._id}`);
     } catch (error) {
-      console.error("Error opening chat:", error);
+      console.error("❌ [CHAT] Error opening chat:", error);
       alert("Failed to open chat");
     }
   };
@@ -412,13 +463,17 @@ const ChatPage = () => {
   
   // Get the other user in a chat (not the current user)
   const getOtherUser = (users) => {
-    const currentUser = JSON.parse(localStorage.getItem("userInfo"));
-    return users?.find(u => u._id !== currentUser?._id);
+    if (!user || !users) return null;
+    return users.find(u => u._id !== user._id);
   };
 
   // Auto-scroll to latest message
   useEffect(() => {
-    scrollRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (messages.length > 0) {
+      setTimeout(() => {
+        scrollRef.current?.scrollIntoView({ behavior: "smooth" });
+      }, 100);
+    }
   }, [messages]);
 
   // Search functionality
@@ -433,11 +488,16 @@ const ChatPage = () => {
     contact.phoneNumber.includes(searchQuery)
   );
 
+  // --- CONNECTION MANAGEMENT ---
+  
   // Manual socket reconnection function
   const handleManualReconnect = () => {
-    console.log("🔄 Manual reconnect triggered");
+    console.log("🔄 [SOCKET] Manual reconnect triggered");
     if (socket) {
+      // Disconnect first
       socket.disconnect();
+      
+      // Reconnect after short delay
       setTimeout(() => {
         socket.connect();
         
@@ -448,7 +508,7 @@ const ChatPage = () => {
           setTimeout(() => {
             if (socket.connected) {
               socket.emit("setup", userInfo);
-              console.log("🔄 Re-emitted setup after manual reconnect");
+              console.log("🔄 [SOCKET] Re-emitted setup after manual reconnect");
             }
           }, 1000);
         }
@@ -460,15 +520,35 @@ const ChatPage = () => {
   useEffect(() => {
     if (!socketConnected && !connectionError) {
       const timer = setTimeout(() => {
-        console.log("⏰ Auto-reconnect attempt");
+        console.log("⏰ [SOCKET] Auto-reconnect attempt");
         if (socket && !socket.connected) {
           socket.connect();
         }
-      }, 3000);
+      }, 5000); // Try every 5 seconds
       
       return () => clearTimeout(timer);
     }
   }, [socketConnected, connectionError]);
+
+  // Debug function to check socket status
+  const debugSocketStatus = () => {
+    console.log("🔍 [DEBUG] Socket Status:");
+    console.log("   Socket exists:", !!socket);
+    console.log("   Socket connected:", socket?.connected);
+    console.log("   Socket ID:", socket?.id);
+    console.log("   User ID:", user?._id);
+    console.log("   Selected Chat ID:", selectedChat?._id);
+    console.log("   Selected Chat Compare ID:", selectedChatCompare?._id);
+    
+    if (socket && selectedChat) {
+      // Send debug request to server
+      socket.emit("debug", {
+        userId: user?._id,
+        chatId: selectedChat._id
+      });
+      console.log("🔍 [DEBUG] Sent debug request to server");
+    }
+  };
 
   // --- LOADING SCREEN ---
   if (loading) {
@@ -477,7 +557,9 @@ const ChatPage = () => {
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-700 mx-auto"></div>
           <p className="mt-4 text-slate-600">Loading your messages...</p>
-          <p className="text-xs text-slate-400 mt-2">Socket: {socketConnected ? "✅ Connected" : "🔌 Connecting..."}</p>
+          <p className="text-xs text-slate-400 mt-2">
+            Socket: {socketConnected ? "✅ Connected" : connectionError ? "❌ Error" : "🔌 Connecting..."}
+          </p>
         </div>
       </div>
     );
@@ -498,7 +580,7 @@ const ChatPage = () => {
             </div>
             <div>
               <p className="font-bold leading-none">{user?.firstName || "User"}</p>
-              {/* Connection Status */}
+              {/* Connection Status Indicator */}
               <div className="flex items-center gap-2 mt-1">
                 {socketConnected ? (
                   <span className="text-[10px] text-green-300 flex items-center gap-1">
@@ -745,14 +827,16 @@ const ChatPage = () => {
               {messages.length > 0 ? (
                 messages.map((msg) => {
                   const isMe = msg.sender?._id === user?._id;
+                  const isTemp = msg.isTemp; // Check if temporary message
+                  
                   return (
                     <div
                       key={msg._id}
-                      className={`max-w-[70%] p-3 rounded-2xl text-sm shadow-sm ${isMe ? "bg-blue-600 text-white self-end rounded-tr-none" : "bg-white text-slate-800 self-start rounded-tl-none"}`}
+                      className={`max-w-[70%] p-3 rounded-2xl text-sm shadow-sm ${isMe ? "bg-blue-600 text-white self-end rounded-tr-none" : "bg-white text-slate-800 self-start rounded-tl-none"} ${isTemp ? 'opacity-70' : ''}`}
                     >
                       <p>{msg.content}</p>
                       <p className={`text-[10px] mt-1 text-right ${isMe ? "text-blue-100" : "text-slate-400"}`}>
-                        {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {isTemp ? 'Sending...' : new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       </p>
                     </div>
                   );
@@ -776,13 +860,13 @@ const ChatPage = () => {
                   className="flex-1 p-3 bg-slate-100 rounded-xl outline-none text-sm focus:ring-1 ring-blue-400 focus:bg-white"
                   value={newMessage}
                   onChange={(e) => setNewMessage(e.target.value)}
-                  disabled={!selectedChat}
+                  disabled={!selectedChat || !socketConnected}
                   autoFocus
                 />
                 <button
                   type="submit"
-                  disabled={!newMessage.trim() || !selectedChat}
-                  className={`p-3 rounded-xl shadow-md ${newMessage.trim() && selectedChat ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-gray-300 text-gray-500 cursor-not-allowed'}`}
+                  disabled={!newMessage.trim() || !selectedChat || !socketConnected}
+                  className={`p-3 rounded-xl shadow-md ${newMessage.trim() && selectedChat && socketConnected ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-gray-300 text-gray-500 cursor-not-allowed'}`}
                 >
                   <Send size={20} />
                 </button>
@@ -800,7 +884,18 @@ const ChatPage = () => {
               <p className="text-xs mt-1">• Add contacts using the "Add New Contact" button</p>
               <p className="text-xs">• Click on any contact to start chatting</p>
               <p className="text-xs">• Your messages are synced across devices</p>
+              <p className="text-xs mt-2">• Socket Status: {socketConnected ? "✅ Connected" : "❌ Disconnected"}</p>
             </div>
+            
+            {/* Debug Button (Development only) */}
+            {process.env.NODE_ENV === 'development' && (
+              <button
+                onClick={debugSocketStatus}
+                className="mt-4 text-xs bg-gray-800 text-white px-3 py-2 rounded"
+              >
+                🔍 Debug Socket Status
+              </button>
+            )}
           </div>
         )}
       </div>
